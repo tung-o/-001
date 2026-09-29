@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Cat Crossing - Physical Jump</title>
+    
+    <!-- Loading Tailwind CSS for utility classes -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Loading Retro Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    
+    <!-- MediaPipe Libraries for Pose Detection -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            background-color: #0f172a; /* Slate 900 */
+            color: #fff;
+            font-family: 'Press Start 2P', cursive;
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            touch-action: none; /* Prevent scroll on touch */
+        }
+
+        #game-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            aspect-ratio: 4/3;
+            background: #1e293b;
+            box-shadow: 0 0 30px rgba(74, 222, 128, 0.3);
+            border: 4px solid #334155;
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 23, 42, 0.9);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .btn {
+            background: #4ade80;
+            color: #064e3b;
+            border: none;
+            padding: 15px 30px;
+            font-size: 1.2rem;
+            font-family: 'Press Start 2P', cursive;
+            cursor: pointer;
+            border-radius: 8px;
+            margin-top: 20px;
+            box-shadow: 0 6px #16a34a;
+            transition: all 0.1s;
+        }
+
+        .btn:active {
+            transform: translateY(4px);
+            box-shadow: 0 2px #16a34a;
+        }
+        
+        .btn:disabled {
+            background: #94a3b8;
+            box-shadow: 0 6px #64748b;
+            cursor: not-allowed;
+            color: #334155;
+        }
+
+        #score-display {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 1.5rem;
+            color: #4ade80;
+            z-index: 5;
+            text-shadow: 3px 3px 0px #000;
+            pointer-events: none;
+        }
+
+        .instructions {
+            font-size: 0.85rem;
+            line-height: 2;
+            color: #cbd5e1;
+            max-width: 600px;
+            margin-top: 20px;
+            background: rgba(0,0,0,0.5);
+            padding: 20px;
+            border-radius: 12px;
+            border: 2px dashed #4ade80;
+        }
+
+        .highlight { color: #fde047; }
+        
+        /* Mobile optimization */
+        @media (max-width: 640px) {
+            .instructions { font-size: 0.6rem; line-height: 1.5; }
+            h1 { font-size: 1.5rem !important; }
+            .btn { font-size: 1rem; padding: 10px 20px; }
+            #score-display { font-size: 1rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <!-- Score & Level Display -->
+        <div id="score-display">
+            SCORE: <span id="score">0</span><br>
+            <span class="text-yellow-400 text-sm">LEVEL: <span id="level">1</span></span>
+        </div>
+        
+        <!-- Start Screen Overlay -->
+        <div id="ui-overlay">
+            <div id="start-content">
+                <h1 class="text-4xl text-yellow-400 mb-2 tracking-widest" style="font-size: 2rem;">AR CAT CROSSING</h1>
+                <p class="text-sm text-yellow-300 mb-6">AI Pose Detection Powered</p>
+                
+                <div class="instructions text-left inline-block">
+                    🐱 <b>HOW TO PLAY:</b><br><br>
+                    1. Stand back so the camera sees your upper body.<br>
+                    2. <span class="highlight">PHYSICALLY JUMP</span> to make the cat move forward!<br>
+                    3. Avoid the vehicles (🚗🚌🏎️).<br>
+                    4. Reach the top to score a point.<br>
+                    <br>
+                    <i>* Keyboard fallback: Press UP Arrow to jump.</i>
+                </div>
+                
+                <button id="start-btn" class="btn">START GAME</button>
+                <p id="status-msg" class="text-blue-400 text-xs mt-4"></p>
+            </div>
+
+            <!-- Game Over Screen (Hidden by default) -->
+            <div id="game-over-content" style="display: none; flex-direction: column; align-items: center;">
+                <h1 class="text-5xl text-red-500 mb-2 tracking-widest" style="font-size: 2.5rem; text-shadow: 2px 2px 0 #000;">GAME OVER</h1>
+                <p class="text-xl text-white mb-2">SCORE: <span id="final-score" class="text-yellow-400 text-2xl">0</span></p>
+                <p class="text-md text-gray-300 mb-8">REACHED LEVEL: <span id="final-level" class="text-yellow-400 text-xl">1</span></p>
+                <button id="restart-btn" class="btn" style="background: #ef4444; color: #fff; box-shadow: 0 6px #b91c1c;">PLAY AGAIN</button>
+            </div>
+        </div>
+
+        <!-- Hidden Webcam Video (used by MediaPipe) -->
+        <video id="webcam" autoplay playsinline style="display: none;"></video>
+        <!-- Main Game Canvas -->
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const video = document.getElementById('webcam');
+        const startBtn = document.getElementById('start-btn');
+        const uiOverlay = document.getElementById('ui-overlay');
+        const scoreEl = document.getElementById('score');
+        const levelEl = document.getElementById('level');
+        const statusMsg = document.getElementById('status-msg');
+
+        // Game Over Elements
+        const startContent = document.getElementById('start-content');
+        const gameOverContent = document.getElementById('game-over-content');
+        const finalScoreEl = document.getElementById('final-score');
+        const finalLevelEl = document.getElementById('final-level');
+        const restartBtn = document.getElementById('restart-btn');
+
+        let isPlaying = false;
+        let isGameOver = false;
+        let score = 0;
+        let level = 1;
+        let speedMultiplier = 1.0;
+        let showLevelUpTimer = 0;
+        let audioCtx;
+
+        // Load Scratch Cat image
+        const catImg = new Image();
+        catImg.src = 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b5/ScratchCat.svg/200px-ScratchCat.svg.png';
+
+        // Jump Detection Variables
+        let lastJumpTime = 0;
+        const jumpCooldown = 800; // ms between jumps (physical jumps take time)
+        let smoothedY = null;     // Baseline Y position of the player's head/shoulders
+        const jumpThreshold = 0.06; // Normalized change in Y to trigger a jump (6% of screen height)
+
+        // Game Entities
+        const cat = {
+            size: 60,
+            x: 0,
+            y: 0,
+            jumpDistance: 60,
+            reset: function() {
+                this.x = canvas.width / 2 - this.size / 2;
+                this.y = canvas.height - this.size - 20;
+            }
+        };
+
+        class Car {
+            constructor(y, speed, emoji, direction) {
+                this.size = 50;
+                this.y = y;
+                this.speed = speed;
+                this.emoji = emoji;
+                this.direction = direction;
+                this.x = direction === 1 ? -this.size : canvas.width;
+            }
+
+            update() {
+                // Apply speed multiplier based on current level
+                this.x += (this.speed * speedMultiplier) * this.direction;
+                if (this.direction === 1 && this.x > canvas.width + this.size) {
+                    this.x = -this.size;
+                } else if (this.direction === -1 && this.x < -this.size * 2) {
+                    this.x = canvas.width + this.size;
+                }
+            }
+
+            draw(context) {
+                context.font = `${this.size}px Arial`;
+                context.textBaseline = 'top';
+                context.fillText(this.emoji, this.x, this.y);
+            }
+        }
+
+        let cars = [];
+
+        function initCars() {
+            cars = [
+                new Car(420, 3.0, '🚗', 1),
+                new Car(340, 4.5, '🏎️', -1),
+                new Car(260, 2.5, '🚌', 1),
+                new Car(180, 5.0, '🚓', -1),
+                new Car(100, 3.5, '🚚', 1)
+            ];
+        }
+
+        function initAudio() {
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+            } catch (e) {
+                console.warn("Web Audio API not supported");
+            }
+        }
+
+        function playTone(freq1, freq2, type, duration, vol = 0.5) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            osc.type = type;
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            const now = audioCtx.currentTime;
+            osc.frequency.setValueAtTime(freq1, now);
+            if (freq2) {
+                osc.frequency.exponentialRampToValueAtTime(freq2, now + duration);
+            }
+            
+            gain.gain.setValueAtTime(vol, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + duration);
+            
+            osc.start(now);
+            osc.stop(now + duration);
+        }
+
+        function playJump() { playTone(300, 600, 'sine', 0.15, 0.4); }
+        function playCrash() { playTone(150, 40, 'sawtooth', 0.3, 0.5); }
+        function playWin() { 
+            playTone(400, 600, 'square', 0.1, 0.3); 
+            setTimeout(() => playTone(600, 800, 'square', 0.15, 0.3), 100);
+        }
+
+        function catJump() {
+            cat.y -= cat.jumpDistance;
+            playJump();
+            lastJumpTime = Date.now();
+        }
+
+        function detectPhysicalJump(landmarks) {
+            if (!landmarks || landmarks.length === 0) return;
+
+            // Use the nose (index 0) to track vertical movement
+            const nose = landmarks[0];
+            const currentY = nose.y;
+
+            // Initialize smoothed baseline
+            if (smoothedY === null) {
+                smoothedY = currentY;
+                return;
+            }
+
+            // Check if player moved UP significantly (Y decreases as you go up)
+            // AND if enough time has passed since the last jump
+            if (currentY < smoothedY - jumpThreshold) {
+                if (Date.now() - lastJumpTime > jumpCooldown) {
+                    catJump();
+                    // Instantly update baseline to new height to prevent double triggers
+                    smoothedY = currentY; 
+                }
+            } else {
+                // Gradually pull the baseline towards the current position
+                // This accounts for slowly standing up, sitting down, or height differences
+                smoothedY = (smoothedY * 0.9) + (currentY * 0.1);
+            }
+        }
+
+        function triggerGameOver() {
+            isGameOver = true;
+            playCrash();
+            
+            // Show Game Over Screen
+            uiOverlay.style.display = 'flex';
+            startContent.style.display = 'none';
+            gameOverContent.style.display = 'flex';
+            
+            // Set Final Score and Level
+            finalScoreEl.textContent = score;
+            finalLevelEl.textContent = level;
+        }
+
+        function checkCollisions() {
+            let margin = 10;
+            for (let car of cars) {
+                if (cat.x + margin < car.x + car.size - margin &&
+                    cat.x + cat.size - margin > car.x + margin &&
+                    cat.y + margin < car.y + car.size - margin &&
+                    cat.y + cat.size - margin > car.y + margin) {
+                    
+                    triggerGameOver();
+                    return;
+                }
+            }
+
+            if (cat.y < 50) {
+                score++;
+                level++; // Increase level
+                speedMultiplier += 0.25; // Increase speed by 25% per level
+                showLevelUpTimer = 60; // Show level up text for 60 frames
+                
+                scoreEl.textContent = score;
+                levelEl.textContent = level;
+                playWin();
+                cat.reset();
+            }
+            
+            if (cat.x < 0) cat.x = 0;
+            if (cat.x + cat.size > canvas.width) cat.x = canvas.width - cat.size;
+            if (cat.y > canvas.height - cat.size) cat.y = canvas.height - cat.size;
+        }
+
+        let pose;
+        let camera;
+
+        function onResults(results) {
+            if (!isPlaying) {
+                // Hide overlay once the first frame successfully processes
+                uiOverlay.style.display = 'none';
+                isPlaying = true;
+                cat.reset();
+                initCars();
+            }
+
+            // 1. Draw Camera Background (Mirrored)
+            ctx.save();
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+            if (results.image) {
+                ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+            }
+            ctx.restore();
+
+            // 2. Draw Dark Overlay so game elements stand out
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Skip updating logic if game is over (freeze frame)
+            if (!isGameOver) {
+                // 3. AI Jump Detection
+                if (results.poseLandmarks) {
+                    detectPhysicalJump(results.poseLandmarks);
+                }
+
+                // 4. Update Game Entities
+                cars.forEach(car => car.update());
+            }
+
+            // Draw Game Entities (Always draw, even if game is over to show crash scene)
+            cars.forEach(car => car.draw(ctx));
+
+            // Draw Scratch Cat safely
+            if (catImg.complete && catImg.naturalWidth > 0) {
+                ctx.drawImage(catImg, cat.x, cat.y, cat.size, cat.size);
+            } else {
+                // Fallback to Emoji if image fails to load
+                ctx.font = `${cat.size}px Arial`;
+                ctx.textBaseline = 'top';
+                ctx.fillText('🐱', cat.x, cat.y);
+            }
+
+            // Draw Level Up Animation Text
+            if (showLevelUpTimer > 0) {
+                ctx.fillStyle = `rgba(253, 224, 71, ${showLevelUpTimer / 60})`; // Fading yellow
+                ctx.font = '40px "Press Start 2P"';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Add black stroke for readability
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = `rgba(0, 0, 0, ${showLevelUpTimer / 60})`;
+                ctx.strokeText(`LEVEL ${level}`, canvas.width / 2, canvas.height / 2);
+                ctx.fillText(`LEVEL ${level}`, canvas.width / 2, canvas.height / 2);
+                
+                // Reset alignment for other drawings
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'top';
+                
+                showLevelUpTimer--;
+            }
+
+            // 5. Check Collisions & Win State
+            if (!isGameOver) {
+                checkCollisions();
+            }
+        }
+
+        restartBtn.addEventListener('click', () => {
+            // Reset game stats
+            score = 0;
+            level = 1;
+            speedMultiplier = 1.0;
+            scoreEl.textContent = score;
+            levelEl.textContent = level;
+            
+            // Reset entities
+            cat.reset();
+            initCars();
+            
+            // Hide overlay and resume game
+            uiOverlay.style.display = 'none';
+            isGameOver = false;
+        });
+
+        startBtn.addEventListener('click', async () => {
+            startBtn.disabled = true;
+            statusMsg.textContent = 'Initializing Camera & AI Model (Please wait)...';
+            
+            try {
+                initAudio();
+                if(audioCtx && audioCtx.state === 'suspended') {
+                    await audioCtx.resume();
+                }
+
+                // Initialize MediaPipe Pose
+                pose = new Pose({locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+                }});
+                
+                pose.setOptions({
+                    modelComplexity: 0, // Lower complexity for faster performance in browser
+                    smoothLandmarks: true,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+                
+                pose.onResults(onResults);
+
+                // Initialize Camera Utility
+                camera = new Camera(video, {
+                    onFrame: async () => {
+                        await pose.send({image: video});
+                    },
+                    width: 800,
+                    height: 600
+                });
+                
+                await camera.start();
+                
+            } catch (err) {
+                console.error(err);
+                startBtn.disabled = false;
+                statusMsg.textContent = 'Error accessing camera or AI. Please refresh and allow permissions.';
+                statusMsg.classList.replace('text-blue-400', 'text-red-500');
+            }
+        });
+
+        // Keyboard fallback for testing
+        window.addEventListener('keydown', (e) => {
+            if (!isPlaying || isGameOver) return;
+            if (e.key === 'ArrowUp' && Date.now() - lastJumpTime > jumpCooldown) {
+                catJump();
+            }
+        });
+
+    </script>
+</body>
+</html>
